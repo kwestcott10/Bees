@@ -1,0 +1,295 @@
+---
+title: "Katherine_Project"
+author: "Katherine Westcott"
+date: "11/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+
+```
+
+### Work on BeeLossClean
+
+#### Immporting and naming main dataframes
+
+```{r importing data frames}
+
+# Bee Census State 
+# Not really sure what the deal with this one is 
+BCS <- read_csv("Data/BeeCensusState.csv")
+head(BCS)
+
+
+#Bee survey state
+# Data contains different loss variables
+BSS <- read_csv("Data/BeeSurveyState.csv")
+head(BSS)
+BSS <- BSS %>%
+  select(Year, Period, State, "State ANSI", "Data Item", Value)
+
+# Pivoting Data Item variables into their own columns 
+BSS <- BSS %>%
+  pivot_wider(names_from = "Data Item", values_from = "Value")
+head(BSS)
+write_csv(BSS, "Data/BeeStateSurveyClean.csv")
+BLC <- read_csv("Data/BeeLossClean.csv")
+
+
+#writing BLC
+head(BLC)
+BLC <- read_csv("Data/BeeLossClean2.csv")
+head(BLC)
+
+```
+
+#### Adding region and divisions to BLC
+
+Adding USA regions (4) and divisions (9) for geographic analysis 
+
+Data is from: https://www2.census.gov/geo/pdfs/maps-data/maps/reference/us_regdiv.pdf
+https://github.com/cphalpert/census-regions/blob/master/us%20census%20bureau%20regions%20and%20divisions.csv
+
+```{r Regions and divisions}
+
+#Add regions and divisions to BLC
+#Data is from census.gov 
+st_reg <- read_csv("Data/regions.csv")
+head(st_reg)
+BLC_reg <- BLC %>%
+  left_join(st_reg, by = "State") 
+head(BLC_reg)
+
+#Making regions dfs
+south <- filter(BLC_reg, Region == "South")
+
+northeast <- BLC_reg %>%
+  filter(Region == "Northeast")
+
+midwest <- BLC_reg %>%
+  filter(Region == "Midwest")
+
+west <- BLC_reg %>%
+  filter(Region == "West")
+
+
+#Adding divisions
+southatlantic <- BLC_reg %>%
+  filter(Division == "South Atlantic")
+
+
+```
+
+Each region still includes a lot of data points. Divions may be a better way to analyize geographically.
+
+Below are some division graphs. Should figure out best way to graphically express our findings
+
+```{r Division graphs}
+
+#plot of each state in south atlantic division 
+ggplot(data = southatlantic) + 
+  geom_point(mapping = aes(x = Year, y = PercentTotalWinterLoss, se = FALSE)) +
+  facet_wrap(~State)
+
+
+#Percent winter loss over the years 
+#lower bars = better 
+c <- ggplot(data = southatlantic, mapping = aes(Year,PercentTotalWinterLoss)) 
+c + geom_col(
+  mapping = (aes(fill = Year)),
+  data = NULL,
+  position = "stack",
+  width = NULL,
+  na.rm = FALSE,
+  show.legend = NA,
+  inherit.aes = TRUE
+  ) + facet_wrap(~State
+  ) +  scale_fill_gradient(low = "yellow", high = "orange") +
+  theme_minimal()
+
+```
+
+Below I find the average loss per year for each division.
+
+One graph shows all of the divisions on one, the other is faceted on the same scale. 
+
+```{r average division loss and graph}
+
+div_avg <- BLC_reg %>%
+  group_by(Division, Year) %>%
+  summarize(average = mean(PercentTotalWinterLoss), Year = max(Year))
+
+head(div_avg)
+
+ggplot(data = div_avg) + 
+  geom_smooth(mapping = aes(x = Year, y = average, color = Division), se = FALSE) +
+  theme_minimal()
+
+ggplot(data = div_avg) + 
+  geom_smooth(mapping = aes(x = Year, y = average), se = FALSE) +
+  facet_wrap(~Division) +
+  theme_minimal()
+
+```
+
+This shows a very clear drop in total winter loss between the years of 2007 and 2011 across all states. Loss collectivley rises again from 2015 onward. 
+
+```{r derivative}
+
+#Trying to plot derivative of Percent Total Winter Loss 
+#Derivative will show us between which years PTWL changed the most 
+#Ask Prof Wall about this if we want to include it
+dd <- div_avg %>%
+  summarize(deriv = c(NA, diff(average)/diff(Year)), Division = Division, Year = Year)
+
+ggplot(data = dd) + 
+  geom_smooth(mapping = aes(x = Year, y = deriv), color = "orange", se = FALSE) +
+  facet_wrap(~Division) +
+  theme_minimal()
+
+```
+
+The derivative plots help to further display how quickly colony losses were occuring across the country. Between 2008 and 2010, colonies across the eastern seaboard experienced rapid drops in overwinter losses; but starting in 2011 the same areas began to more rapidly lose hives over the winters. The west coast and central divisions have had more stability on average.  
+
+#### Analysis with total colonies 
+
+I will find total colonies across all states for each year, and add a new column to the BLC mainframe along with a proportion of colonies to national colonies for each state.
+
+```{r total colonies}
+
+# Total colonies per year 
+colonies_each_yr <- BLC_reg %>%
+  group_by(Year) %>%
+  summarize(TotalColoniesYr = sum(NumberofColonies))
+
+#Add total colonies to BLC
+BLC_col <- BLC_reg %>%
+  full_join(colonies_each_yr, by = "Year") %>%
+  mutate(PropColoniesState = NumberofColonies/TotalColoniesYr)
+
+```
+
+Divide the states into quartiles based on the proportion of colonies in each state. I did this by finding an average of the proportion of colonies in each state over all years. 
+
+```{r quartiles}
+
+#Find quartiles for states to best group them to compare  
+state_avg <- BLC_col %>%
+  group_by(State) %>%
+  summarize(AverageProp = mean(PropColoniesState))
+
+quantile(state_avg$AverageProp)
+
+q1 <- state_avg %>%
+  filter(AverageProp >= 1.122323e-05 & AverageProp < 1.164311e-03) %>%
+  mutate(quartile = "q1")
+
+q2 <- state_avg %>%
+  filter(AverageProp >= 1.164311e-03 & AverageProp < 4.361638e-03) %>%
+  mutate(quartile = "q2")
+
+q3 <- state_avg %>%
+  filter(AverageProp >= 4.361638e-03 & AverageProp < 1.502303e-02) %>%
+  mutate(quartile = "q3")
+
+q4 <- state_avg %>%
+  filter(AverageProp >= 1.502303e-02 & AverageProp <= 2.084698e-01) %>%
+  mutate(quartile = "q4")
+
+```
+
+Graphical analyses with quartiles, can do the rest of the quartiles if necessary.
+
+```{r qt graphs}
+
+#Plot each quartile
+
+#Need more colors 
+library(RColorBrewer)
+# Define the number of colors you want
+nb.cols <- 14
+mycolors <- colorRampPalette(brewer.pal(14, "Set2"))(nb.cols)
+# Create a ggplot with 18 colors 
+# Use scale_fill_manual
+
+q1_plot <- transform(q1, State = reorder(State, AverageProp))
+q2_plot <- transform(q2, State = reorder(State, AverageProp))
+q3_plot <- transform(q3, State = reorder(State, AverageProp))
+q4_plot <- transform(q4, State = reorder(State, AverageProp))
+
+ggplot(q1_plot, mapping = aes(x = State, y = AverageProp)) +
+  geom_col(aes(fill = factor(State))) +
+  coord_flip() +
+  scale_y_continuous("Average Proportion of Beehives") +
+  scale_x_discrete("State") +
+  scale_fill_manual(values = mycolors)
+
+ggplot(q2_plot, mapping = aes(x = State, y = AverageProp)) +
+  geom_col(aes(fill = factor(State))) +
+  coord_flip() +
+  scale_y_continuous("Average Proportion of Beehives") +
+  scale_x_discrete("State") +
+  scale_fill_manual(values = mycolors) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(q3_plot, mapping = aes(x = State, y = AverageProp)) +
+  geom_col(aes(fill = factor(State))) +
+  coord_flip() +
+  scale_y_continuous("Average Proportion of Beehives") +
+  scale_x_discrete("State") +
+  scale_fill_manual(values = mycolors) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(q4_plot, mapping = aes(x = State, y = AverageProp)) +
+  geom_col(aes(fill = factor(State))) +
+  coord_flip() +
+  scale_y_continuous("Average Proportion of Beehives") +
+  scale_x_discrete("State") +
+  scale_fill_manual(values = mycolors) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+California and Multi State Op account for about 50% of the total proportion of bees in the USA on average. A multi state operation travels with hives to pollinate large farms (typically during the spring). This is a massive industry. 
+
+Now adding quartiles to BLC 
+
+```{r BLC_qt}
+
+#Need to take the state names from the quartiles and match them to the bigger data set 
+
+int1 <- rbind(q1, q3)
+int2<- rbind(int1, q2)
+all_quartiles <- rbind(int2, q4)
+
+state_quartiles <- all_quartiles %>%
+  select(State, quartile)
+
+#adding quartiles to BLC
+
+BLC_qt <- BLC_col %>% 
+  full_join(state_quartiles, by = "State")
+
+head(BLC_qt)
+
+```
+
+Make a boxplot for all of the states to visualize quartiles. If we use this in the report, it should come before the barcharts. 
+
+```{r boxplot}
+
+ggplot(data = BLC_qt, aes(x = "", y = PropColoniesState, color = quartile)) +
+  geom_boxplot()
+
+
+```
+
+
